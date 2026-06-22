@@ -1,0 +1,47 @@
+/* UC San Diego Passports — App-specific overrides for Decorator 5 */
+
+/* Toast slide-in animation */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Kiosk step indicator — active dot */
+.step-dot-active {
+  box-shadow: 0 0 0 4px rgba(0, 98, 155, 0.25);
+}
+
+/* Ensure panels with role="button" have cursor pointer */
+.panel[role="button"] {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.panel[role="button"]:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+/* Dashboard sidebar nav-pills active state matches UCSD Blue */
+.nav-pills > li.active > a,
+.nav-pills > li.active > a:hover,
+.nav-pills > li.active > a:focus {
+  background-color: #00629B;
+}
+
+/* Jumbotron sand background from Decorator 5 */
+.jumbotron-sand {
+  background-color: #f5f0e6;
+}
+
+/* Responsive: tighten spacing on small screens */
+@media (max-width: 768px) {
+  .panel-body { padding: 1rem; }
+  h1.page-header { font-size: 2rem; }
+  h2.page-header { font-size: 1.4rem; }
+}
+
+/* Focus ring for accessibility — matches UCSD Blue */
+a:focus, button:focus, .btn:focus, input:focus, select:focus, textarea:focus {
+  outline: 3px solid #00629B;
+  outline-offset: 2px;
+}

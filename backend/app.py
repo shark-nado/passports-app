@@ -1,0 +1,362 @@
+import csv
+import io
+import json
+import asyncio
+from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select, func, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .database import get_db, init_db
+from .models import Location, Visitor, FormQuestion
+from .schemas import (
+    CheckinRequest, CheckinResponse, VisitorResponse,
+    StatusUpdate, NotesUpdate, LoginRequest, LoginResponse,
+    QuestionUpdate, QuestionConfig, StatsResponse,
+)
+from .auth import verify_password, create_token, decode_token
+from .sse import sse_manager
+from .seed import seed_database
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    async for db in get_db():
+        await seed_database(db)
+        break
+    yield
+
+
+app = FastAPI(title="UC San Diego Passports API", lifespan=lifespan)
+
+# Serve built frontend (production) — mount after API routes so /api/* takes precedence
+import os
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "..", "static")
+if os.path.isdir(STATIC_DIR):
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# --- Auth Dependency ---
+
+async def get_current_location(request: Request) -> str:
+    """Extract location_id from JWT in Authorization header."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    token = auth.removeprefix("Bearer ")
+    payload = decode_token(token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return payload["location_id"]
+
+
+# --- Public Routes ---
+
+@app.post("/api/auth/login")
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Location))
+    locations = result.scalars().all()
+    for loc in locations:
+        if loc.password_hash and verify_password(body.password, loc.password_hash):
+            token = create_token(loc.id)
+            return LoginResponse(token=token, location_id=loc.id)
+    raise HTTPException(status_code=401, detail="Invalid password")
+
+
+@app.post("/api/checkin", response_model=CheckinResponse)
+async def checkin(body: CheckinRequest, db: AsyncSession = Depends(get_db)):
+    # Validate location exists
+    result = await db.execute(select(Location).where(Location.id == body.location_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=400, detail="Invalid location")
+
+    visitor = Visitor(
+        location_id=body.location_id,
+        first_name=body.first_name,
+        last_name=body.last_name,
+        email=body.email or None,
+        phone=body.phone,
+        visit_type=body.visit_type,
+        service_type=body.service_type or None,
+        photo_format=body.photo_format or None,
+        app_complete=body.app_complete,
+        checklist=body.checklist,
+        subscribe=body.subscribe,
+        status="Checked In",
+    )
+    db.add(visitor)
+    await db.commit()
+    await db.refresh(visitor)
+
+    # Notify dashboard clients via SSE
+    await sse_manager.publish(body.location_id, "checkin", {
+        "id": visitor.id,
+        "first_name": visitor.first_name,
+        "last_name": visitor.last_name,
+        "service_type": visitor.service_type,
+    })
+
+    return CheckinResponse(id=visitor.id, message="Check-in successful")
+
+
+# --- Protected Routes (require JWT) ---
+
+@app.get("/api/visitors", response_model=list[VisitorResponse])
+async def get_visitors(
+    location: str = Query(...),
+    date: str | None = Query(None),
+    search: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _loc: str = Depends(get_current_location),
+):
+    # Verify the token's location matches the requested location
+    if _loc != location:
+        raise HTTPException(status_code=403, detail="Location mismatch")
+
+    stmt = select(Visitor).where(Visitor.location_id == location)
+
+    if date:
+        stmt = stmt.where(func.date(Visitor.check_in_at) == date)
+
+    if search:
+        q = f"%{search}%"
+        stmt = stmt.where(
+            Visitor.first_name.ilike(q) |
+            Visitor.last_name.ilike(q) |
+            Visitor.email.ilike(q) |
+            Visitor.phone.ilike(q)
+        )
+
+    stmt = stmt.order_by(Visitor.check_in_at.desc())
+    result = await db.execute(stmt)
+    visitors = result.scalars().all()
+
+    return [VisitorResponse.model_validate(v) for v in visitors]
+
+
+@app.patch("/api/visitors/{visitor_id}/status")
+async def update_visitor_status(
+    visitor_id: str,
+    body: StatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    _loc: str = Depends(get_current_location),
+):
+    result = await db.execute(select(Visitor).where(Visitor.id == visitor_id))
+    visitor = result.scalar_one_or_none()
+    if visitor is None:
+        raise HTTPException(status_code=404, detail="Visitor not found")
+    if visitor.location_id != _loc:
+        raise HTTPException(status_code=403, detail="Location mismatch")
+
+    visitor.status = body.status
+    if body.status == "Signed Out":
+        visitor.sign_out_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"ok": True}
+
+
+@app.patch("/api/visitors/{visitor_id}/notes")
+async def update_visitor_notes(
+    visitor_id: str,
+    body: NotesUpdate,
+    db: AsyncSession = Depends(get_db),
+    _loc: str = Depends(get_current_location),
+):
+    result = await db.execute(select(Visitor).where(Visitor.id == visitor_id))
+    visitor = result.scalar_one_or_none()
+    if visitor is None:
+        raise HTTPException(status_code=404, detail="Visitor not found")
+    if visitor.location_id != _loc:
+        raise HTTPException(status_code=403, detail="Location mismatch")
+
+    visitor.notes = (body.notes or "")[:100]
+    await db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/visitors/export")
+async def export_visitors(
+    location: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _loc: str = Depends(get_current_location),
+):
+    if _loc != location:
+        raise HTTPException(status_code=403, detail="Location mismatch")
+
+    result = await db.execute(
+        select(Visitor).where(Visitor.location_id == location).order_by(Visitor.check_in_at.desc())
+    )
+    visitors = result.scalars().all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "ID", "First Name", "Last Name", "Email", "Phone",
+        "Visit Type", "Service Type", "Photo Format",
+        "Application Complete", "Checklist",
+        "Subscribe", "Notes", "Status",
+        "Check-In Date", "Check-In Time", "Sign-Out Time",
+    ])
+
+    def fmt_date(dt):
+        return dt.strftime("%Y-%m-%d") if dt else ""
+
+    def fmt_time(dt):
+        return dt.strftime("%H:%M") if dt else ""
+
+    def yes_no(val):
+        if val is True:
+            return "Yes"
+        if val is False:
+            return "No"
+        return ""
+
+    for v in visitors:
+        writer.writerow([
+            v.id, v.first_name, v.last_name, v.email or "", v.phone,
+            v.visit_type, v.service_type or "", v.photo_format or "",
+            yes_no(v.app_complete), v.checklist or "",
+            yes_no(v.subscribe), v.notes or "", v.status,
+            fmt_date(v.check_in_at), fmt_time(v.check_in_at), fmt_time(v.sign_out_at),
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=visitors_{location}.csv"},
+    )
+
+
+@app.get("/api/questions")
+async def get_questions(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(FormQuestion))
+    questions = result.scalars().all()
+    return {q.key: {"title": q.title, "description": q.description} for q in questions}
+
+
+@app.put("/api/questions")
+async def update_questions(
+    body: QuestionConfig,
+    db: AsyncSession = Depends(get_db),
+    _loc: str = Depends(get_current_location),
+):
+    for key, val in [("photo", body.photo), ("citizenship", body.citizenship),
+                     ("id", body.id), ("payment", body.payment)]:
+        result = await db.execute(select(FormQuestion).where(FormQuestion.key == key))
+        q = result.scalar_one_or_none()
+        if q:
+            q.title = val.title
+            q.description = val.description
+    await db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/stats", response_model=StatsResponse)
+async def get_stats(
+    location: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _loc: str = Depends(get_current_location),
+):
+    if _loc != location:
+        raise HTTPException(status_code=403, detail="Location mismatch")
+
+    result = await db.execute(
+        select(Visitor).where(Visitor.location_id == location)
+    )
+    visitors = result.scalars().all()
+    total = len(visitors)
+
+    passports = [v for v in visitors if v.service_type == "passports"]
+    notary = [v for v in visitors if v.service_type == "notary"]
+    photo_only = [v for v in visitors if v.service_type == "photo-only"]
+    returning = [v for v in visitors if v.service_type is None]
+
+    passports_count = len(passports)
+    notary_count = len(notary)
+    photo_only_count = len(photo_only)
+    returning_count = len(returning)
+
+    walk_ins = [v for v in visitors if v.visit_type == "walk-in"]
+    walk_in_percent = round((len(walk_ins) / total * 100), 1) if total > 0 else 0
+
+    incomplete_app = [v for v in passports if v.app_complete is False]
+    prep_rate = round(
+        ((passports_count - len(incomplete_app)) / passports_count * 100), 1
+    ) if passports_count > 0 else 0
+
+    def missing(field):
+        return [v for v in passports if v.checklist and json.loads(v.checklist).get(field) is False]
+
+    return StatsResponse(
+        total=total,
+        passports_count=passports_count,
+        notary_count=notary_count,
+        photo_only_count=photo_only_count,
+        returning_count=returning_count,
+        prep_rate=prep_rate,
+        walk_in_percent=walk_in_percent,
+        incomplete_app_count=len(incomplete_app),
+        missing_photo_count=len(missing("photo")),
+        missing_citizenship_count=len(missing("citizenship")),
+        missing_id_count=len(missing("id")),
+        missing_payment_count=len(missing("payment")),
+    )
+
+
+# --- SSE Events ---
+
+@app.get("/events")
+async def sse_events(
+    location: str = Query(...),
+    token: str = Query(...),
+):
+    """Server-Sent Events endpoint for real-time dashboard updates."""
+    payload = decode_token(token)
+    if payload is None or payload["location_id"] != location:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    queue = sse_manager.subscribe(location)
+
+    async def event_generator():
+        try:
+            # Send initial connection event
+            yield f"event: connected\ndata: {json.dumps({'status': 'ok'})}\n\n"
+            while True:
+                message = await queue.get()
+                yield message
+        except asyncio.CancelledError:
+            pass
+        finally:
+            sse_manager.unsubscribe(location, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# --- Health Check ---
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
