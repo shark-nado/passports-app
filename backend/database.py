@@ -8,7 +8,7 @@ _raw_url = os.environ.get(
     "postgresql+asyncpg://postgres:postgres@localhost:5432/passports",
 )
 DATABASE_URL = _re.sub(
-    r"^postgres(?:\+[a-z]+)?://",
+    r"^postgres(?:ql)?(?:\+[a-z]+)?://",
     "postgresql+asyncpg://",
     _raw_url,
 )
