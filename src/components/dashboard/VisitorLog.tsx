@@ -43,9 +43,9 @@ export default function VisitorLog() {
   const locId = auth?.locationId || 'csc'
   const lang = currentLanguage
 
-  const fetchVisitors = useCallback(async () => {
+  const fetchVisitors = useCallback(async (showLoading = false) => {
     if (!auth) return
-    setLoading(true)
+    if (showLoading) setLoading(true)
     try {
       const params = new URLSearchParams({ location: locId })
       if (filterDate) params.set('date', filterDate)
@@ -55,11 +55,11 @@ export default function VisitorLog() {
       })
       if (res.ok) setVisitors(await res.json())
     } catch { /* ignore */ }
-    finally { setLoading(false) }
+    finally { if (showLoading) setLoading(false) }
   }, [auth, locId, search, filterDate])
 
   useEffect(() => {
-    fetchVisitors()
+    fetchVisitors(true)
     const handler = () => fetchVisitors()
     window.addEventListener('visitor-update', handler)
     return () => window.removeEventListener('visitor-update', handler)

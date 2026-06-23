@@ -74,7 +74,7 @@ export default function DashboardLayout() {
             </div>
           </div>
 
-          <div className="col-sm-9">
+          <div className="col-sm-9" style={{ overflowX: 'auto' }}>
             <Outlet />
           </div>
         </div>
