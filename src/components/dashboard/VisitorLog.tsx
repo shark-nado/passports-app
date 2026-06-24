@@ -28,10 +28,8 @@ function serviceLabel(s: string | null): string {
   }
 }
 
-function mark(v: boolean | null) {
-  if (v === true) return <span className="label label-success">✓</span>
-  if (v === false) return <span className="label label-danger">✗</span>
-  return <span className="label label-default">—</span>
+const DOC_LABELS: Record<string, string> = {
+  photo: 'Photo', citizenship: 'Citiz', id: 'ID', payment: 'Pay',
 }
 
 export default function VisitorLog() {
@@ -128,87 +126,97 @@ export default function VisitorLog() {
       </div>
 
       <div className="panel panel-default">
-        <div className="table-responsive">
-          <table className="table table-striped table-hover" style={{ margin: 0 }}>
-            <thead>
-              <tr>
-                <th>{t('visitorLog.colVisitor', undefined, lang)}</th>
-                <th>{t('visitorLog.colService', undefined, lang)}</th>
-                <th>{t('visitorLog.colStatus', undefined, lang)}</th>
-                <th style={{ textAlign: 'center' }}>{t('visitorLog.colApp', undefined, lang)}</th>
-                <th style={{ textAlign: 'center' }}>{t('visitorLog.colPhoto', undefined, lang)}</th>
-                <th style={{ textAlign: 'center' }}>{t('visitorLog.colCitizen', undefined, lang)}</th>
-                <th style={{ textAlign: 'center' }}>{t('visitorLog.colId', undefined, lang)}</th>
-                <th style={{ textAlign: 'center' }}>{t('visitorLog.colPayment', undefined, lang)}</th>
-                <th>{t('visitorLog.colNotes', undefined, lang)}</th>
-                <th>{t('visitorLog.colAction', undefined, lang)}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={10} style={{ textAlign: 'center', padding: '3rem', color: '#999' }}>{t('visitorLog.loading', undefined, lang)}</td></tr>
-              ) : visitors.length === 0 ? (
-                <tr><td colSpan={10} style={{ textAlign: 'center', padding: '3rem', color: '#999' }}>{t('visitorLog.noRecords', undefined, lang)}</td></tr>
-              ) : visitors.map(v => {
-                const checkIn = new Date(v.check_in_at)
-                const dateStr = checkIn.toLocaleDateString()
-                const timeStr = checkIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                const outStr = v.sign_out_at
-                  ? new Date(v.sign_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                  : '—'
-                const cl = v.checklist ? JSON.parse(v.checklist) : {}
-                const isPass = v.service_type === 'passports'
-                const chk = (f: string) => isPass ? mark(cl[f]) : <span className="label label-default">—</span>
+        <table className="table table-striped table-hover" style={{ margin: 0, fontSize: '0.85rem' }}>
+          <thead>
+            <tr>
+              <th style={{ width: '22%' }}>{t('visitorLog.colVisitor', undefined, lang)}</th>
+              <th style={{ width: '13%' }}>{t('visitorLog.colService', undefined, lang)}</th>
+              <th style={{ width: '18%' }}>{t('visitorLog.colStatus', undefined, lang)}</th>
+              <th style={{ width: '25%' }}>Docs</th>
+              <th style={{ width: '12%' }}>{t('visitorLog.colNotes', undefined, lang)}</th>
+              <th style={{ width: '10%' }}>{t('visitorLog.colAction', undefined, lang)}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={6} style={{ textAlign: 'center', padding: '3rem', color: '#999' }}>{t('visitorLog.loading', undefined, lang)}</td></tr>
+            ) : visitors.length === 0 ? (
+              <tr><td colSpan={6} style={{ textAlign: 'center', padding: '3rem', color: '#999' }}>{t('visitorLog.noRecords', undefined, lang)}</td></tr>
+            ) : visitors.map(v => {
+              const checkIn = new Date(v.check_in_at)
+              const dateStr = checkIn.toLocaleDateString()
+              const timeStr = checkIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              const outStr = v.sign_out_at
+                ? new Date(v.sign_out_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : null
+              const cl = v.checklist ? JSON.parse(v.checklist) : {}
+              const isPass = v.service_type === 'passports'
 
-                return (
-                  <tr key={v.id}>
-                    <td>
-                      <strong>{v.first_name} {v.last_name}</strong>
-                      <div style={{ fontSize: '0.8rem', color: '#6B7C96' }}>{v.email || '—'}</div>
-                      <div style={{ fontSize: '0.8rem', color: '#6B7C96' }}>{v.phone}</div>
-                    </td>
-                    <td>
-                      <span className="label label-primary">{serviceLabel(v.service_type)}</span>
-                      <div style={{ fontSize: '0.8rem', color: '#6B7C96', marginTop: 4 }}>
-                        {v.visit_type === 'walk-in' ? 'Walk-in' : v.visit_type === 'appointment' ? 'Appt' : 'Return'}
+              return (
+                <tr key={v.id}>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <strong>{v.first_name} {v.last_name}</strong>
+                    <div style={{ fontSize: '0.75rem', color: '#6B7C96', lineHeight: 1.3 }}>{v.email || v.phone}</div>
+                  </td>
+                  <td>
+                    <span className="label label-primary" style={{ fontSize: '0.75rem' }}>{serviceLabel(v.service_type)}</span>
+                    <div style={{ fontSize: '0.7rem', color: '#6B7C96', marginTop: 2 }}>
+                      {v.visit_type === 'walk-in' ? 'Walk-in' : v.visit_type === 'appointment' ? 'Appt' : 'Return'}
+                    </div>
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <span className={`label ${v.status === 'Checked In' ? 'label-success' : 'label-default'}`}
+                      style={{ fontSize: '0.75rem' }}>
+                      {v.status}
+                    </span>
+                    <span style={{ color: '#6B7C96', fontSize: '0.75rem', marginLeft: 6 }}>{timeStr}</span>
+                    <div style={{ fontSize: '0.7rem', color: '#aaa' }}>{dateStr}</div>
+                  </td>
+                  <td>
+                    {isPass ? (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 6px' }}>
+                        {['app_complete', 'photo', 'citizenship', 'id', 'payment'].map(f => {
+                          let ok: boolean | null
+                          if (f === 'app_complete') { ok = v.app_complete }
+                          else { ok = cl[f] ?? null }
+                          const label = f === 'app_complete' ? 'App' : DOC_LABELS[f]
+                          return (
+                            <span key={f} style={{
+                              fontSize: '0.7rem',
+                              padding: '1px 4px',
+                              borderRadius: 3,
+                              background: ok === true ? '#dff0d8' : ok === false ? '#f2dede' : '#f5f5f5',
+                              color: ok === true ? '#3c763d' : ok === false ? '#a94442' : '#999',
+                              whiteSpace: 'nowrap',
+                            }}>
+                              {label} {ok === true ? '✓' : ok === false ? '✗' : '—'}
+                            </span>
+                          )
+                        })}
                       </div>
-                    </td>
-                    <td style={{ fontSize: '0.85rem' }}>
-                      <span className={`label ${v.status === 'Checked In' ? 'label-success' : 'label-default'}`}>
-                        {v.status}
-                      </span>
-                      <div style={{ color: '#6B7C96', fontSize: '0.8rem', marginTop: 4 }}>
-                        {dateStr} {timeStr}
-                      </div>
-                      <div style={{ color: '#6B7C96', fontSize: '0.8rem' }}>
-                        {t('visitorLog.signedOut', undefined, lang)}: {outStr}
-                      </div>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>{isPass ? mark(v.app_complete) : '—'}</td>
-                    <td style={{ textAlign: 'center' }}>{chk('photo')}</td>
-                    <td style={{ textAlign: 'center' }}>{chk('citizenship')}</td>
-                    <td style={{ textAlign: 'center' }}>{chk('id')}</td>
-                    <td style={{ textAlign: 'center' }}>{chk('payment')}</td>
-                    <td>
-                      <input type="text" className="form-control input-sm" style={{ width: 110 }}
-                        defaultValue={v.notes || ''} maxLength={100} placeholder={t('visitorLog.addNote', undefined, lang)}
-                        onBlur={e => saveNotes(v.id, e.target.value)} />
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      {v.status === 'Checked In' ? (
-                        <button className="btn btn-primary btn-xs" onClick={() => signOut(v.id)}>
-                          {t('visitorLog.signOut', undefined, lang)}
-                        </button>
-                      ) : (
-                        <span style={{ color: '#999', fontSize: '0.8rem' }}>{t('visitorLog.signedOut', undefined, lang)}</span>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                    ) : (
+                      <span style={{ color: '#ccc', fontSize: '0.75rem' }}>N/A</span>
+                    )}
+                  </td>
+                  <td>
+                    <input type="text" className="form-control input-sm" style={{ width: 90, fontSize: '0.75rem', height: 26 }}
+                      defaultValue={v.notes || ''} maxLength={100} placeholder="..."
+                      onBlur={e => saveNotes(v.id, e.target.value)} />
+                  </td>
+                  <td style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                    {v.status === 'Checked In' ? (
+                      <button className="btn btn-primary btn-xs" style={{ fontSize: '0.75rem' }} onClick={() => signOut(v.id)}>
+                        {t('visitorLog.signOut', undefined, lang)}
+                      </button>
+                    ) : (
+                      <span style={{ color: '#999', fontSize: '0.75rem' }}>{t('visitorLog.signedOut', undefined, lang)} {outStr}</span>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </>
   )
