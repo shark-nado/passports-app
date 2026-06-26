@@ -1,0 +1,35 @@
+advanced:
+  nameOverride: passports-app
+
+image:
+  repository: ghcr.io/shark-nado/passports-app
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+env:
+  DATABASE_URL: "sqlite+aiosqlite:////data/passports.db"
+
+extraEnv:
+  - name: JWT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: passports-app-secrets
+        key: JWT_SECRET
+
+ingress:
+  host: passports.CHANGEME.ucsd.edu
+
+litestream:
+  enabled: true
+  dbPath: /data/passports.db
+  replicaPath: /replica/passports
+
+nfs:
+  server: CHANGEME-nfs-server.ucsd.edu
+  path: CHANGEME-nfs-export
+  subPath: CHANGEME-home-relative-passports-app-dir
+
+podSecurityContext:
+  runAsUser: CHANGEME-uid
+  runAsGroup: CHANGEME-gid
+  fsGroup: CHANGEME-gid

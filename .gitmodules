@@ -1,0 +1,3 @@
+[submodule "vendor/UCSD-Skills-Library"]
+	path = vendor/UCSD-Skills-Library
+	url = https://github.com/dbalders/UCSD-Skills-Library.git
