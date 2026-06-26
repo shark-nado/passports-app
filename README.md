@@ -75,3 +75,25 @@ backend/          FastAPI application
 docker build -t passports-app .
 docker run -p 8000:8000 -v ./passports.db:/app/passports.db passports-app
 ```
+
+## Deployment
+
+Helm deployment notes are in `DEPLOYMENT.md`. The DSMLP NFS data directory must exist before deploying. DSMLP home directories default to a 10GB quota, which can be expanded if needed.
+
+This repo deploys with the generic UCSD deployment chart from the `UCSD-Skills-Library` submodule and the Passports-specific values in `deploy/passports-values.yaml`. Clone with submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/shark-nado/passports-app.git
+```
+
+If already cloned, initialize the submodule:
+
+```bash
+git submodule update --init --recursive
+```
+
+Validate locally with:
+
+```bash
+helm lint vendor/UCSD-Skills-Library/skills/ucsd-dsmlp-deploy/assets/helm-chart -f deploy/passports-values.yaml
+```
